@@ -38,8 +38,11 @@ bool MatchIntFilter(uint32_t op, uint32_t roomValue, uint32_t filterValue) {
 
 bool RoomMatchesFilters(const Room& room, const shadnet::SearchRoomRequest& req) {
     // Hidden rooms never appear in searches.
-    if (room.flagAttr & Matching2::ORBIS_NP_MATCHING2_ROOM_FLAG_ATTR_HIDDEN)
+    if (room.flagAttr & Matching2::ORBIS_NP_MATCHING2_ROOM_FLAG_ATTR_HIDDEN) {
+        qWarning() << "  filter reject HIDDEN: room=" << room.roomId << "flags=" << Qt::hex
+                   << room.flagAttr;
         return false;
+    }
 
     // NAT_TYPE_RESTRICTION is ignored in the flag comparison (matches RPCN; it is
     // irrelevant here and breaks some titles' searches).
@@ -530,7 +533,8 @@ ErrorType ClientSession::CmdCreateRoom(StreamExtractor& data, QByteArray& reply)
 
     qInfo() << "Room" << rid << "created by" << m_info.npid << "max=" << maxSlot
             << "world=" << room.worldId << "lobby=" << room.lobbyId
-            << "key=" << m_matching.matchingKey;
+            << "key=" << m_matching.matchingKey << "flags=" << Qt::hex
+            << m_matching.roomFlags << Qt::dec;
     return ErrorType::NoError;
 }
 
@@ -903,8 +907,12 @@ ErrorType ClientSession::CmdSearchRoom(StreamExtractor& data, QByteArray& reply)
         QVector<const Room*> matches;
         for (uint64_t rid : candidates) {
             auto roomIt = m_shared->matching.rooms.find({m_matching.matchingKey, rid});
-            if (roomIt == m_shared->matching.rooms.end())
+            if (roomIt == m_shared->matching.rooms.end()) {
+                qWarning() << "  search skip STALE candidate rid=" << rid
+                           << "key=" << m_matching.matchingKey
+                           << "(present in world index but missing from rooms map)";
                 continue;
+            }
             if (!RoomMatchesFilters(roomIt.value(), req))
                 continue;
             matches.append(&roomIt.value());
