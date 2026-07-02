@@ -533,8 +533,8 @@ ErrorType ClientSession::CmdCreateRoom(StreamExtractor& data, QByteArray& reply)
 
     qInfo() << "Room" << rid << "created by" << m_info.npid << "max=" << maxSlot
             << "world=" << room.worldId << "lobby=" << room.lobbyId
-            << "key=" << m_matching.matchingKey << "flags=" << Qt::hex
-            << m_matching.roomFlags << Qt::dec;
+            << "key=" << m_matching.matchingKey << "flags=" << Qt::hex << m_matching.roomFlags
+            << Qt::dec;
     return ErrorType::NoError;
 }
 
