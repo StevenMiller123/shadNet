@@ -506,6 +506,13 @@ QHttpServerResponse HandleSessionCreate(Database& db, SharedState& shared,
                          QStringLiteral("Expected multipart/mixed body with a boundary"));
     }
     const QList<MultipartPart> parts = ParseMultipartMixed(req.body(), boundary);
+    {
+        QStringList descs;
+        for (const auto& p : parts)
+            descs << QString::fromUtf8(p.contentDescription);
+        qInfo() << "WebAPI: session create parts=" << descs
+                << "ct=" << QString::fromUtf8(req.value("Content-Type"));
+    }
 
     QByteArray jsonPart, imagePart, dataPart, changeablePart;
     bool haveJson = false, haveImage = false, haveData = false, haveChangeable = false;
@@ -525,8 +532,8 @@ QHttpServerResponse HandleSessionCreate(Database& db, SharedState& shared,
             haveChangeable = true;
         }
     }
-    // session-request and session-image are required; at least one data part is required.
-    if (!haveJson || !haveImage || (!haveData && !haveChangeable)) {
+    // Only session-request is mandatory; session-image and the data parts are optional
+    if (!haveJson) {
         return JsonError(QHttpServerResponse::StatusCode::BadRequest, WEBAPI_BODY_PARAM_REQUIRED,
                          QStringLiteral("Missing required multipart part"));
     }
