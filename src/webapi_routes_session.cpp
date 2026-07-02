@@ -84,12 +84,22 @@ QByteArray ExtractBoundary(const QByteArray& contentType) {
     if (b < 0)
         return {};
     QByteArray v = contentType.mid(b + 9).trimmed();
-    const int semi = v.indexOf(';');
-    if (semi >= 0)
-        v = v.left(semi).trimmed();
-    if (v.size() >= 2 && v.startsWith('"') && v.endsWith('"'))
-        v = v.mid(1, v.size() - 2);
-    return v;
+    if (v.startsWith('"')) {
+        // Quoted form: boundary="...". Read up to the closing quote. This also stops before a
+        // duplicated/comma-joined Content-Type
+        const int end = v.indexOf('"', 1);
+        return end > 0 ? v.mid(1, end - 1) : v.mid(1);
+    }
+    // Unquoted token: ends at the first parameter/list/whitespace delimiter.
+    int end = v.size();
+    for (int i = 0; i < v.size(); ++i) {
+        const char c = v[i];
+        if (c == ';' || c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            end = i;
+            break;
+        }
+    }
+    return v.left(end);
 }
 
 // Minimal multipart/mixed splitter: parts delimited by "--boundary", each with its own headers
