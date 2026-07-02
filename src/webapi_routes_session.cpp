@@ -1615,11 +1615,14 @@ QHttpServerResponse HandleInvitationUse(Database& db, SharedState& shared, const
 } // namespace
 
 void RegisterSessionRoutes(QHttpServer& http, Database& db, SharedState& shared) {
-    // POST /v1/sessions -- create and join a session (multipart/mixed body).
-    http.route("/v1/sessions", QHttpServerRequest::Method::Post,
-               [&db, &shared](const QHttpServerRequest& req) -> QHttpServerResponse {
-                   return HandleSessionCreate(db, shared, req);
-               });
+    // POST /v1/sessions -- create and join a session (multipart/mixed body). Some clients
+    // post to the collection with a trailing slash
+    const auto createHandler = [&db,
+                                &shared](const QHttpServerRequest& req) -> QHttpServerResponse {
+        return HandleSessionCreate(db, shared, req);
+    };
+    http.route("/v1/sessions", QHttpServerRequest::Method::Post, createHandler);
+    http.route("/v1/sessions/", QHttpServerRequest::Method::Post, createHandler);
 
     // POST /v1/sessions/<arg>/members -- join a session.
     http.route("/v1/sessions/<arg>/members", QHttpServerRequest::Method::Post,
