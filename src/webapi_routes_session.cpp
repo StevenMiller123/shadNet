@@ -876,6 +876,57 @@ QHttpServerResponse HandleSessionGet(Database& db, SharedState& shared, const QS
     return JsonOk(body);
 }
 
+// GET /v1/sessions/<arg>/members -- the session's member list. Each member matches the session
+// GET 'members' field ({accountId (numeric string), onlineId, platform}), wrapped as
+// {"members":[...]}. Private sessions are readable only by a participant or invitee (else
+// 2114560).
+QHttpServerResponse HandleSessionMembers(Database& db, SharedState& shared,
+                                         const QString& sessionId, const QHttpServerRequest& req) {
+    auto auth = WebApiAuth::Authenticate(req, db);
+    if (!auth.userId.has_value()) {
+        return std::move(auth.errorResponse);
+    }
+    QList<SharedState::SessionMember> members;
+    bool found = false, permitted = false;
+    {
+        QReadLocker lk(&shared.sessionsLock);
+        auto it = shared.sessions.constFind(sessionId);
+        if (it != shared.sessions.constEnd()) {
+            found = true;
+            const auto& s = it.value();
+            bool callerIsMember = false;
+            for (const auto& m : s.members)
+                if (m.userId == *auth.userId) {
+                    callerIsMember = true;
+                    break;
+                }
+            permitted = (s.sessionPrivacy != QStringLiteral("private")) || callerIsMember ||
+                        HasActiveInvitation(shared, s.sessionId, *auth.userId);
+            members = s.members;
+        }
+    }
+    if (!found) {
+        return JsonError(QHttpServerResponse::StatusCode::NotFound, WEBAPI_RESOURCE_NOT_FOUND,
+                         QStringLiteral("Session not found"));
+    }
+    if (!permitted) {
+        return JsonError(QHttpServerResponse::StatusCode::Forbidden, SESSION_NOT_PERMITTED,
+                         QStringLiteral("Not permitted to access the session"));
+    }
+    QJsonArray ms;
+    for (const auto& m : members) {
+        QJsonObject mo;
+        mo.insert(QStringLiteral("accountId"), QString::number(m.userId));
+        mo.insert(QStringLiteral("onlineId"), db.GetUsername(m.userId).value_or(m.npid));
+        mo.insert(QStringLiteral("platform"), m.platform);
+        ms.append(mo);
+    }
+    QJsonObject body;
+    body.insert(QStringLiteral("members"), ms);
+    qInfo() << "WebAPI: session members" << sessionId << "->" << ms.size() << "member(s)";
+    return JsonOk(body);
+}
+
 // DELETE /v1/sessions/<arg> -- delete a session (same permission rule as update).
 QHttpServerResponse HandleSessionDelete(Database& db, SharedState& shared, const QString& sessionId,
                                         const QHttpServerRequest& req) {
@@ -1340,18 +1391,25 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
     const QJsonObject obj = doc.object();
     const QString message = obj.value(QStringLiteral("message")).toString();
 
-    // 'to' is a list of target account IDs (numeric == userId in shadNet). Resolve each to a
-    // (userId, npid) pair before taking the lock; unparseable/zero ids are skipped.
+    // 'to' lists target recipients: each entry is either a numeric account ID (== userId in
+    // shadNet) or an online ID (npid). Resolve each to a (userId, npid) pair before taking the
+    // lock; entries that resolve to no known user are skipped.
     QList<QPair<int64_t, QString>> recipients;
     for (const auto& v : obj.value(QStringLiteral("to")).toArray()) {
-        bool ok = false;
-        const int64_t uid = v.toString().toLongLong(&ok);
-        if (!ok || uid == 0) {
-            continue;
-        }
+        const QString entry = v.toString();
+        bool numeric = false;
+        const int64_t asId = entry.toLongLong(&numeric);
+        int64_t uid = 0;
         QString npid;
-        if (auto n = db.GetUsername(uid)) {
-            npid = *n;
+        if (numeric && asId != 0) {
+            uid = asId;
+            npid = db.GetUsername(uid).value_or(QString());
+        } else if (auto id = db.GetUserId(entry)) {
+            // Non-numeric (or unparseable): treat the entry as an online ID.
+            uid = *id;
+            npid = entry;
+        } else {
+            continue;
         }
         recipients.append({uid, npid});
     }
@@ -1674,6 +1732,13 @@ void RegisterSessionRoutes(QHttpServer& http, Database& db, SharedState& shared)
                [&db, &shared](const QString& sessionId,
                               const QHttpServerRequest& req) -> QHttpServerResponse {
                    return HandleSessionJoin(db, shared, sessionId, req);
+               });
+
+    // GET /v1/sessions/<arg>/members -- list the session's members.
+    http.route("/v1/sessions/<arg>/members", QHttpServerRequest::Method::Get,
+               [&db, &shared](const QString& sessionId,
+                              const QHttpServerRequest& req) -> QHttpServerResponse {
+                   return HandleSessionMembers(db, shared, sessionId, req);
                });
 
     // POST /v1/sessions/<arg>/invitations -- send an invitation linked to a session.
