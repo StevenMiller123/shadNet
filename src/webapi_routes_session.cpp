@@ -102,6 +102,32 @@ QByteArray ExtractBoundary(const QByteArray& contentType) {
     return v.left(end);
 }
 
+QByteArray NormalizeContentType(QByteArray contentType) {
+    contentType = contentType.trimmed();
+    if (contentType.isEmpty())
+        return contentType;
+    QList<QByteArray> segments;
+    int start = 0;
+    bool inQuotes = false;
+    for (int i = 0; i < contentType.size(); ++i) {
+        const char c = contentType.at(i);
+        if (c == '"')
+            inQuotes = !inQuotes;
+        else if (c == ',' && !inQuotes) {
+            segments << contentType.mid(start, i - start).trimmed();
+            start = i + 1;
+        }
+    }
+    segments << contentType.mid(start).trimmed();
+    if (segments.size() < 2)
+        return contentType;
+    for (const QByteArray& seg : segments) {
+        if (seg != segments.first())
+            return contentType; // genuinely different values; leave untouched
+    }
+    return segments.first();
+}
+
 // Minimal multipart/mixed splitter: parts delimited by "--boundary", each with its own headers
 // (terminated by a blank line) then a body; the stream ends at "--boundary--".
 QList<MultipartPart> ParseMultipartMixed(const QByteArray& body, const QByteArray& boundary) {
@@ -510,7 +536,8 @@ QHttpServerResponse HandleSessionCreate(Database& db, SharedState& shared,
         return std::move(auth.errorResponse);
     }
 
-    const QByteArray boundary = ExtractBoundary(req.value("Content-Type"));
+    const QByteArray contentType = NormalizeContentType(req.value("Content-Type"));
+    const QByteArray boundary = ExtractBoundary(contentType);
     if (boundary.isEmpty()) {
         return JsonError(QHttpServerResponse::StatusCode::BadRequest, WEBAPI_INVALID_BODY,
                          QStringLiteral("Expected multipart/mixed body with a boundary"));
@@ -521,7 +548,7 @@ QHttpServerResponse HandleSessionCreate(Database& db, SharedState& shared,
         for (const auto& p : parts)
             descs << QString::fromUtf8(p.contentDescription);
         qInfo() << "WebAPI: session create parts=" << descs
-                << "ct=" << QString::fromUtf8(req.value("Content-Type"));
+                << "ct=" << QString::fromUtf8(contentType);
     }
 
     QByteArray jsonPart, imagePart, dataPart, changeablePart;
@@ -1275,7 +1302,8 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
         return std::move(auth.errorResponse);
     }
 
-    const QByteArray boundary = ExtractBoundary(req.value("Content-Type"));
+    const QByteArray contentType = NormalizeContentType(req.value("Content-Type"));
+    const QByteArray boundary = ExtractBoundary(contentType);
     if (boundary.isEmpty()) {
         return JsonError(QHttpServerResponse::StatusCode::BadRequest, WEBAPI_INVALID_BODY,
                          QStringLiteral("Expected multipart/mixed body with a boundary"));
