@@ -286,7 +286,8 @@ QString IsoUtc(qint64 ms) {
 // extdData; the emulator's push decoder maps them back into the event's from/to/data objects.
 void SendSessionInvitationEvent(SharedState& shared, const QString& dataType, int64_t fromUserId,
                                 const QString& fromNpid, const QList<int64_t>& toUserIds,
-                                const QString& sessionId) {
+                                const QString& sessionId,
+                                const QHash<int64_t, QString>& invitationIds = {}) {
     if (toUserIds.isEmpty())
         return;
     QReadLocker lk(&shared.clientsLock);
@@ -304,6 +305,9 @@ void SendSessionInvitationEvent(SharedState& shared, const QString& dataType, in
         extd.append({QStringLiteral("toAccountId"), QString::number(toId)});
         if (!sessionId.isEmpty())
             extd.append({QStringLiteral("sessionId"), sessionId});
+        const auto invIt = invitationIds.constFind(toId);
+        if (invIt != invitationIds.constEnd() && !invIt.value().isEmpty())
+            extd.append({QStringLiteral("invitationId"), invIt.value()});
         const QByteArray pkt = ClientSession::BuildNotification(
             NotificationType::WebApiPushEvent,
             ClientSession::BuildWebApiPushPayload(QStringLiteral("sessionInvitation"), 0, dataType,
@@ -1420,6 +1424,7 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
     }
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QHash<int64_t, QString> invitationIds; // recipient userId -> their invitationId, for the push
     {
         QWriteLocker lk(&shared.sessionsLock);
         auto sit = shared.sessions.constFind(sessionId);
@@ -1432,6 +1437,7 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
             SharedState::Invitation inv;
             inv.invitationId =
                 QStringLiteral("002-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+            invitationIds.insert(r.first, inv.invitationId);
             inv.sessionId = sessionId;
             inv.availablePlatforms = sessionPlatforms;
             inv.fromUserId = *auth.userId;
@@ -1454,7 +1460,7 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
     for (const auto& r : recipients)
         recipientIds.append(r.first);
     SendSessionInvitationEvent(shared, QStringLiteral("np:service:invitation"), *auth.userId,
-                               auth.npid, recipientIds, QString());
+                               auth.npid, recipientIds, sessionId, invitationIds);
     return QHttpServerResponse{QHttpServerResponse::StatusCode::NoContent};
 }
 
