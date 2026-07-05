@@ -1420,6 +1420,8 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
             continue;
         }
         recipients.append({uid, npid});
+        qInfo() << "WebAPI: invite resolve entry" << entry << "-> toUserId" << uid << "npid"
+                << npid;
     }
     if (recipients.isEmpty()) {
         return JsonError(
@@ -1652,8 +1654,13 @@ QHttpServerResponse HandleInvitationList(Database& db, SharedState& shared, cons
     {
         QReadLocker lk(&shared.sessionsLock);
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        qInfo() << "WebAPI: invitation list for auth.userId" << *auth.userId << "total invitations"
+                << shared.invitations.size();
         for (auto it = shared.invitations.cbegin(); it != shared.invitations.cend(); ++it) {
             const auto& inv = it.value();
+            qInfo() << "WebAPI:   candidate invitationId" << inv.invitationId << "toUserId"
+                    << inv.toUserId << "toNpid" << inv.toNpid
+                    << (inv.toUserId == *auth.userId ? "[MATCH]" : "[skip]");
             if (inv.toUserId != *auth.userId)
                 continue;
             QJsonObject e;
@@ -1681,6 +1688,8 @@ QHttpServerResponse HandleInvitationList(Database& db, SharedState& shared, cons
     body.insert(QStringLiteral("start"), 0);
     body.insert(QStringLiteral("size"), arr.size());
     body.insert(QStringLiteral("totalResult"), arr.size());
+    qInfo() << "WebAPI: invitation list for auth.userId" << *auth.userId << "-> matched"
+            << arr.size();
     return JsonOk(body);
 }
 
