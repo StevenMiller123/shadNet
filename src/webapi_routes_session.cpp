@@ -42,6 +42,7 @@ constexpr quint32 WEBAPI_BODY_PARAM_REQUIRED = 2113926;  // required body member
 
 // Invitation-specific error
 constexpr quint32 INVITATION_EXPIRED = 2115584; // invitation expired or data already used
+constexpr qint64 INVITATION_TTL_MS = 0;         // invitation lifetime in ms,0 = never expires
 
 // 0 == permitted. owner-bind: only the creator may mutate/delete; owner-migration: any member.
 quint32 SessionPermissionError(const SharedState::Session& s, int64_t userId) {
@@ -287,7 +288,8 @@ QString IsoUtc(qint64 ms) {
 void SendSessionInvitationEvent(SharedState& shared, const QString& dataType, int64_t fromUserId,
                                 const QString& fromNpid, const QList<int64_t>& toUserIds,
                                 const QString& sessionId,
-                                const QHash<int64_t, QString>& invitationIds = {}) {
+                                const QHash<int64_t, QString>& invitationIds = {},
+                                qint64 validUntil = 0) {
     if (toUserIds.isEmpty())
         return;
     QReadLocker lk(&shared.clientsLock);
@@ -308,6 +310,8 @@ void SendSessionInvitationEvent(SharedState& shared, const QString& dataType, in
         const auto invIt = invitationIds.constFind(toId);
         if (invIt != invitationIds.constEnd() && !invIt.value().isEmpty())
             extd.append({QStringLiteral("invitationId"), invIt.value()});
+        if (validUntil != 0)
+            extd.append({QStringLiteral("validUntil"), QString::number(validUntil)});
         const QByteArray pkt = ClientSession::BuildNotification(
             NotificationType::WebApiPushEvent,
             ClientSession::BuildWebApiPushPayload(QStringLiteral("sessionInvitation"), 0, dataType,
@@ -1449,6 +1453,7 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
             inv.hasInvitationData = haveData;
             inv.createdAt = now;
             inv.updatedAt = now;
+            inv.validUntil = INVITATION_TTL_MS > 0 ? now + INVITATION_TTL_MS : 0;
             inv.used = false;
             shared.invitations.insert(inv.invitationId, inv);
         }
@@ -1459,8 +1464,9 @@ QHttpServerResponse HandleSessionInvite(Database& db, SharedState& shared, const
     QList<int64_t> recipientIds;
     for (const auto& r : recipients)
         recipientIds.append(r.first);
+    const qint64 validUntil = INVITATION_TTL_MS > 0 ? now + INVITATION_TTL_MS : 0;
     SendSessionInvitationEvent(shared, QStringLiteral("np:service:invitation"), *auth.userId,
-                               auth.npid, recipientIds, sessionId, invitationIds);
+                               auth.npid, recipientIds, sessionId, invitationIds, validUntil);
     return QHttpServerResponse{QHttpServerResponse::StatusCode::NoContent};
 }
 
