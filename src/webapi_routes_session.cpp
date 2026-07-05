@@ -42,7 +42,7 @@ constexpr quint32 WEBAPI_BODY_PARAM_REQUIRED = 2113926;  // required body member
 
 // Invitation-specific error
 constexpr quint32 INVITATION_EXPIRED = 2115584; // invitation expired or data already used
-constexpr qint64 INVITATION_TTL_MS = 0;         // invitation lifetime in ms,0 = never expires
+constexpr qint64 INVITATION_TTL_MS = 0;         // invitation lifetime in ms, 0 = never expires
 
 // 0 == permitted. owner-bind: only the creator may mutate/delete; owner-migration: any member.
 quint32 SessionPermissionError(const SharedState::Session& s, int64_t userId) {
@@ -308,14 +308,35 @@ void SendSessionInvitationEvent(SharedState& shared, const QString& dataType, in
         if (!sessionId.isEmpty())
             extd.append({QStringLiteral("sessionId"), sessionId});
         const auto invIt = invitationIds.constFind(toId);
-        if (invIt != invitationIds.constEnd() && !invIt.value().isEmpty())
-            extd.append({QStringLiteral("invitationId"), invIt.value()});
+        const QString thisInvitationId =
+            (invIt != invitationIds.constEnd()) ? invIt.value() : QString();
+        if (!thisInvitationId.isEmpty())
+            extd.append({QStringLiteral("invitationId"), thisInvitationId});
         if (validUntil != 0)
             extd.append({QStringLiteral("validUntil"), QString::number(validUntil)});
+        // Invitation payload goes in the notification BODY (pData); titles/NP Toolkit parse the
+        // invitationId/sessionId from here, not from extdData. Only the invitation case (which
+        // carries an invitationId) gets a body-join/member events keep an empty body.
+        QByteArray body;
+        if (!thisInvitationId.isEmpty()) {
+            QJsonObject b;
+            b.insert(QStringLiteral("invitationId"), thisInvitationId);
+            if (!sessionId.isEmpty())
+                b.insert(QStringLiteral("sessionId"), sessionId);
+            b.insert(QStringLiteral("receivedDate"), IsoUtc(QDateTime::currentMSecsSinceEpoch()));
+            if (validUntil != 0)
+                b.insert(QStringLiteral("expired"),
+                         QDateTime::currentMSecsSinceEpoch() > validUntil);
+            QJsonObject fromUser;
+            fromUser.insert(QStringLiteral("onlineId"), fromNpid);
+            fromUser.insert(QStringLiteral("accountId"), fromAccountId);
+            b.insert(QStringLiteral("fromUser"), fromUser);
+            body = QJsonDocument(b).toJson(QJsonDocument::Compact);
+        }
         const QByteArray pkt = ClientSession::BuildNotification(
             NotificationType::WebApiPushEvent,
             ClientSession::BuildWebApiPushPayload(QStringLiteral("sessionInvitation"), 0, dataType,
-                                                  QByteArray(), fromNpid, it->npid, extd));
+                                                  body, fromNpid, it->npid, extd));
         it->send(pkt);
     }
 }
